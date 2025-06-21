@@ -34,13 +34,19 @@ class VoicePaymentProcessor:
         ]
         
         self.payment_patterns = [
-            r'(?:send|pay|transfer|give)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?\s+(?:to\s+)?(\w+)',
-            r'(?:send|pay|transfer|give)\s+(\w+)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?',
+            r'(?:send|pay|transfer|give)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?\s+(?:to\s+)?(\w+)(?:\s+for\s+(.*))?',
+            r'(?:send|pay|transfer|give)\s+(\w+)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)(?:\s+for\s+(.*))?',
             r'pay\s+(\w+)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?\s+for\s+(.*)',
+            r'(\d+)\s*(?:rupees?|rs\.?|₹)\s+(?:to\s+)?(\w+)(?:\s+for\s+(.*))?',
         ]
     
     def enhance_with_sarvam_ai(self, text):
         """Use Sarvam AI for better text understanding"""
+        # Skip if no API key is configured
+        if SARVAM_API_KEY == 'your-sarvam-api-key-here' or not SARVAM_API_KEY:
+            print("Sarvam AI API key not configured, using fallback processing")
+            return None
+            
         try:
             headers = {
                 'Authorization': f'Bearer {SARVAM_API_KEY}',
@@ -48,7 +54,7 @@ class VoicePaymentProcessor:
             }
             
             payload = {
-                'model': 'sarvam-1',
+                'model': 'sarvam-2.0',
                 'messages': [
                     {
                         'role': 'system',
@@ -67,7 +73,7 @@ class VoicePaymentProcessor:
                 f'{SARVAM_BASE_URL}/chat/completions',
                 headers=headers,
                 json=payload,
-                timeout=10
+                timeout=5
             )
             
             if response.status_code == 200:
@@ -76,7 +82,14 @@ class VoicePaymentProcessor:
                 try:
                     return json.loads(ai_response)
                 except json.JSONDecodeError:
+                    print("Failed to parse AI response as JSON")
                     pass
+            else:
+                print(f"Sarvam AI API error: {response.status_code}")
+        except requests.exceptions.Timeout:
+            print("Sarvam AI request timed out")
+        except requests.exceptions.ConnectionError:
+            print("Cannot connect to Sarvam AI - using fallback")
         except Exception as e:
             print(f"Sarvam AI error: {e}")
         
@@ -143,13 +156,58 @@ class VoicePaymentProcessor:
                               (f" for {reason}" if reason else "") + ". Say 'confirm' to proceed."
                 }
         
-        # Fallback to original pattern matching
-        amount = self.extract_amount(text)
-        contact = self.extract_contact(text)
+        # Fallback to enhanced pattern matching
+        amount = None
+        contact = None
+        reason = None
         
-        # Extract reason (optional)
-        reason_match = re.search(r'for\s+(.*)', text)
-        reason = reason_match.group(1) if reason_match else None
+        # Try enhanced pattern matching
+        for pattern in self.payment_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                groups = match.groups()
+                if len(groups) >= 2:
+                    # Check if first group is amount or contact
+                    if groups[0].replace('hundred', '').replace('thousand', '').replace(' ', '').isdigit() or groups[0] in ['one hundred', 'two hundred', 'three hundred', 'four hundred', 'five hundred', 'thousand']:
+                        amount_str = groups[0]
+                        contact_name = groups[1]
+                        reason = groups[2] if len(groups) > 2 and groups[2] else None
+                    else:
+                        contact_name = groups[0]
+                        amount_str = groups[1]
+                        reason = groups[2] if len(groups) > 2 and groups[2] else None
+                    
+                    # Convert amount
+                    word_to_num = {
+                        'one hundred': 100, 'hundred': 100,
+                        'two hundred': 200, 'three hundred': 300,
+                        'four hundred': 400, 'five hundred': 500,
+                        'thousand': 1000, 'one thousand': 1000
+                    }
+                    
+                    if amount_str in word_to_num:
+                        amount = word_to_num[amount_str]
+                    elif amount_str.isdigit():
+                        amount = int(amount_str)
+                    
+                    # Find contact
+                    for contact_key, contact_info in CONTACTS.items():
+                        if (contact_key.lower() == contact_name.lower() or 
+                            contact_info['name'].lower() == contact_name.lower()):
+                            contact = contact_info
+                            break
+                    
+                    if amount and contact:
+                        break
+        
+        # Final fallback to original extraction methods
+        if not amount:
+            amount = self.extract_amount(text)
+        if not contact:
+            contact = self.extract_contact(text)
+        if not reason:
+            reason_match = re.search(r'for\s+(.*)', text)
+            reason = reason_match.group(1) if reason_match else None
         
         if amount and contact:
             return {
