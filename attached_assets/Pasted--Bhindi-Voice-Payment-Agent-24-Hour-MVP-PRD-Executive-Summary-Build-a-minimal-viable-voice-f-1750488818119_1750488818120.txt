@@ -1,0 +1,251 @@
+# Bhindi Voice Payment Agent - 24 Hour MVP PRD
+
+## Executive Summary
+
+Build a minimal viable voice-first payment agent that demonstrates intent-driven transaction processing. The MVP focuses on core voice-to-payment functionality with basic context understanding, targeting a 24-hour development sprint.
+
+## Product Vision
+
+Create a voice assistant that understands payment intents beyond simple commands, enabling natural language transactions like "Pay Sandeep for last night's dinner" instead of rigid "Send 100rs to Sandeep."
+
+## MVP Scope & Constraints
+
+### In Scope (24 Hours)
+- Basic voice input/output via web interface
+- Simple intent recognition for payment scenarios
+- Contact-based UPI ID lookup
+- Secure payment confirmation flow
+- Transaction execution via test payment gateway
+
+### Out of Scope (Post-MVP)
+- Complex contextual understanding (calendar integration, expense tracking)
+- Voice biometrics authentication
+- Mobile app
+- Multiple language support
+- Advanced AI/ML models
+
+## Core User Stories
+
+### Primary Flow
+1. *As a user*, I want to speak a payment intent so I can initiate transactions hands-free
+2. *As a user*, I want the system to understand basic context (recipient, amount, reason) from my voice command
+3. *As a user*, I want voice confirmation before payment execution for security
+4. *As a user*, I want to hear transaction status after completion
+
+### Example Interactions
+- Input: "Send 500 rupees to Sandeep for dinner"
+- Output: "Confirming payment of 500 rupees to Sandeep. Say 'confirm' to proceed"
+- Input: "Confirm"
+- Output: "Payment successful to Sandeep"
+
+## Technical Architecture (MVP)
+
+### Frontend (4 hours)
+- *Technology*: React.js with Web Speech API
+- *Components*:
+  - Voice input button with recording indicator
+  - Real-time transcription display
+  - Payment confirmation interface
+  - Transaction status display
+- *Features*:
+  - Browser-based speech recognition
+  - Text-to-speech for responses
+  - Simple, clean UI for voice interaction
+
+### Backend (8 hours)
+- *Technology*: Node.js/Express or Python/FastAPI
+- *Core Services*:
+  - Speech processing endpoint
+  - Intent recognition service
+  - Contact/UPI lookup service
+  - Payment processing service
+- *Database*: Simple JSON file or SQLite for contact storage
+
+### Intent Processing (6 hours)
+- *Approach*: Rule-based NLP with regex patterns
+- *Supported Intents*:
+  - send_money: "send X to Y", "pay X to Y"
+  - split_bill: "split bill with X"
+  - pay_for: "pay X for Y reason"
+- *Entity Extraction*:
+  - Amount (numbers, "hundred", "thousand")
+  - Recipient (contact names)
+  - Reason (optional context)
+
+### Payment Integration (4 hours)
+- *Test Environment*: Razorpay Test Mode or Stripe Test Mode
+- *Flow*:
+  - Intent → Amount/Recipient extraction → Confirmation → Payment execution
+- *Security*: Simple PIN-based confirmation for MVP
+
+### Data Storage (2 hours)
+- *Contact Database*:
+  json
+  {
+    "contacts": [
+      {"name": "Sandeep", "upi_id": "sandeep@paytm", "phone": "9999999999"},
+      {"name": "Priya", "upi_id": "priya@gpay", "phone": "8888888888"}
+    ]
+  }
+  
+
+## Feature Specifications
+
+### Voice Input Processing
+- *Input*: Natural language voice commands
+- *Processing*: 
+  - Convert speech to text using Web Speech API
+  - Extract intent and entities using pattern matching
+  - Validate recipient exists in contacts
+- *Output*: Structured payment intent
+
+### Intent Recognition Patterns
+
+Payment Patterns:
+- "send [amount] to [contact]"
+- "pay [contact] [amount] for [reason]"
+- "transfer [amount] to [contact]"
+- "give [contact] [amount]"
+
+Amount Patterns:
+- Numbers: 100, 500, 1000
+- Words: "hundred", "thousand", "fifty"
+- Currency: "rupees", "rs"
+
+Contact Patterns:
+- Exact name match from database
+- Case insensitive matching
+
+
+### Confirmation Flow
+1. Parse voice command
+2. Extract payment details
+3. Lookup recipient UPI ID
+4. Generate confirmation message
+5. Wait for voice confirmation ("yes", "confirm", "proceed")
+6. Execute payment
+7. Provide status feedback
+
+### Error Handling
+- *Unknown Contact*: "I don't have UPI details for [name]. Please add them first."
+- *Missing Amount*: "How much do you want to send to [name]?"
+- *Invalid Command*: "I didn't understand. Try saying 'send 100 rupees to Sandeep'"
+- *Payment Failure*: "Payment failed. Please try again."
+
+## Technical Implementation Plan
+
+### Hour 0-4: Frontend Setup
+- Initialize React app with speech recognition
+- Create voice input interface
+- Implement basic speech-to-text
+- Add text-to-speech for responses
+
+### Hour 4-8: Backend Core
+- Setup Express server
+- Create API endpoints for speech processing
+- Implement basic intent recognition
+- Setup contact data storage
+
+### Hour 8-14: Intent Processing
+- Build regex-based entity extraction
+- Implement payment intent parsing
+- Create confirmation flow logic
+- Add error handling
+
+### Hour 14-18: Payment Integration
+- Integrate test payment gateway
+- Implement payment execution
+- Add transaction status tracking
+- Test payment flows
+
+### Hour 18-22: Integration & Testing
+- Connect frontend to backend
+- End-to-end testing
+- Bug fixes and refinements
+- Performance optimization
+
+### Hour 22-24: Deployment & Demo
+- Deploy to cloud platform (Vercel/Netlify + Railway/Render)
+- Create demo script
+- Documentation
+- Final testing
+
+## MVP Success Metrics
+
+### Functional Goals
+- [ ] Successfully process voice command to payment in <30 seconds
+- [ ] 90% accuracy in intent recognition for supported patterns
+- [ ] Complete payment flow without crashes
+- [ ] Voice confirmation works reliably
+
+### Technical Goals
+- [ ] Response time <3 seconds for intent processing
+- [ ] 100% test payment success rate
+- [ ] Web app loads in <2 seconds
+- [ ] Works on Chrome/Safari browsers
+
+## Risk Mitigation
+
+### High-Risk Items
+1. *Speech Recognition Accuracy*: Use Web Speech API with fallback text input
+2. *Payment Gateway Integration*: Start with test mode, simple flows only
+3. *Intent Recognition Complexity*: Limit to basic patterns, expand post-MVP
+
+### Fallback Plans
+- Manual text input if voice fails
+- Hardcoded contact list for demo
+- Mock payment responses if gateway fails
+
+## Demo Script (5 minutes)
+
+1. *Introduction* (30s): Explain voice-first payment concept
+2. *Simple Payment* (2m): "Send 100 rupees to Sandeep"
+3. *Contextual Payment* (2m): "Pay Priya 500 for lunch"
+4. *Error Handling* (30s): Unknown contact scenario
+
+## Post-MVP Roadmap
+
+### Week 1-2
+- Mobile app development
+- Enhanced context understanding
+- Transaction history
+
+### Month 1
+- Sarvam.ai integration
+- Advanced intent recognition
+- Voice biometrics
+
+### Month 2-3
+- Calendar integration
+- Expense tracking
+- Multi-language support
+
+## Resource Requirements
+
+### Team (24 hours)
+- 1 Full-stack developer (React + Node.js)
+- 1 AI/NLP engineer (intent processing)
+- Access to payment gateway test account
+
+### Tools & Services
+- React.js, Node.js/Express
+- Web Speech API
+- Payment gateway (Razorpay/Stripe test)
+- Cloud hosting (free tier)
+- Domain name (optional)
+
+## Definition of Done
+
+MVP is complete when:
+- User can speak payment command via web interface
+- System extracts recipient and amount correctly
+- Voice confirmation works
+- Test payment executes successfully
+- Transaction status is communicated back
+- Demo can be presented to stakeholders
+
+---
+
+*Target Completion*: 24 hours from start
+*Demo Ready*: Hour 23
+*Buffer Time*: Hour 24 for final fixes
