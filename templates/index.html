@@ -1,0 +1,429 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bhindi Voice Payment Agent</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #4a5568;
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+
+        .subtitle {
+            color: #718096;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .voice-controls {
+            margin: 2rem 0;
+        }
+
+        .voice-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 50%;
+            width: 120px;
+            height: 120px;
+            color: white;
+            font-size: 2rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 1rem;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        .voice-button:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.3);
+        }
+
+        .voice-button.recording {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .status {
+            margin: 1rem 0;
+            padding: 1rem;
+            border-radius: 10px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .status.listening {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 2px solid #bbdefb;
+        }
+
+        .status.processing {
+            background: #fff3e0;
+            color: #f57c00;
+            border: 2px solid #ffcc02;
+        }
+
+        .status.success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            border: 2px solid #a5d6a7;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 2px solid #ef9a9a;
+        }
+
+        .transcript {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            min-height: 50px;
+            border: 1px solid #e9ecef;
+            font-style: italic;
+            color: #6c757d;
+        }
+
+        .confirmation-panel {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            display: none;
+        }
+
+        .confirmation-panel.show {
+            display: block;
+        }
+
+        .confirm-buttons {
+            margin-top: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin: 0 0.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-confirm {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-cancel {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .examples {
+            background: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-top: 2rem;
+            text-align: left;
+        }
+
+        .examples h3 {
+            color: #495057;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .examples ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .examples li {
+            background: white;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1><i class="fas fa-microphone"></i> Bhindi</h1>
+        <p class="subtitle">Voice Payment Agent</p>
+        
+        <div class="voice-controls">
+            <button id="voiceButton" class="voice-button">
+                <i class="fas fa-microphone"></i>
+            </button>
+            <p>Click to speak your payment command</p>
+        </div>
+
+        <div id="status" class="status">
+            Ready to listen...
+        </div>
+
+        <div id="transcript" class="transcript">
+            Your voice command will appear here...
+        </div>
+
+        <div id="confirmationPanel" class="confirmation-panel">
+            <h3>Confirm Payment</h3>
+            <div id="confirmationDetails"></div>
+            <div class="confirm-buttons">
+                <button id="confirmBtn" class="btn btn-confirm">
+                    <i class="fas fa-check"></i> Confirm
+                </button>
+                <button id="cancelBtn" class="btn btn-cancel">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+            </div>
+        </div>
+
+        <div class="examples">
+            <h3>Try saying:</h3>
+            <ul>
+                <li>"Send 500 rupees to Sandeep"</li>
+                <li>"Pay Priya 100 rupees for lunch"</li>
+                <li>"Transfer 1000 to Rahul"</li>
+                <li>"Give Sandeep 200 rupees"</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        class VoicePaymentAgent {
+            constructor() {
+                this.recognition = null;
+                this.isListening = false;
+                this.pendingPayment = null;
+                this.initializeElements();
+                this.initializeSpeechRecognition();
+                this.initializeTextToSpeech();
+            }
+
+            initializeElements() {
+                this.voiceButton = document.getElementById('voiceButton');
+                this.status = document.getElementById('status');
+                this.transcript = document.getElementById('transcript');
+                this.confirmationPanel = document.getElementById('confirmationPanel');
+                this.confirmationDetails = document.getElementById('confirmationDetails');
+                this.confirmBtn = document.getElementById('confirmBtn');
+                this.cancelBtn = document.getElementById('cancelBtn');
+
+                this.voiceButton.addEventListener('click', () => this.toggleListening());
+                this.confirmBtn.addEventListener('click', () => this.confirmPayment());
+                this.cancelBtn.addEventListener('click', () => this.cancelPayment());
+            }
+
+            initializeSpeechRecognition() {
+                if ('webkitSpeechRecognition' in window) {
+                    this.recognition = new webkitSpeechRecognition();
+                } else if ('SpeechRecognition' in window) {
+                    this.recognition = new SpeechRecognition();
+                } else {
+                    this.updateStatus('Speech recognition not supported', 'error');
+                    return;
+                }
+
+                this.recognition.continuous = false;
+                this.recognition.interimResults = true;
+                this.recognition.lang = 'en-US';
+
+                this.recognition.onstart = () => {
+                    this.isListening = true;
+                    this.voiceButton.classList.add('recording');
+                    this.updateStatus('Listening... Speak your payment command', 'listening');
+                };
+
+                this.recognition.onresult = (event) => {
+                    let finalTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) {
+                            finalTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    
+                    if (finalTranscript) {
+                        this.transcript.textContent = finalTranscript;
+                        this.processVoiceCommand(finalTranscript);
+                    }
+                };
+
+                this.recognition.onerror = (event) => {
+                    this.updateStatus(`Error: ${event.error}`, 'error');
+                    this.stopListening();
+                };
+
+                this.recognition.onend = () => {
+                    this.stopListening();
+                };
+            }
+
+            initializeTextToSpeech() {
+                this.synth = window.speechSynthesis;
+            }
+
+            speak(text) {
+                if (this.synth) {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = 0.8;
+                    utterance.pitch = 1;
+                    this.synth.speak(utterance);
+                }
+            }
+
+            toggleListening() {
+                if (this.isListening) {
+                    this.recognition.stop();
+                } else {
+                    this.hideConfirmation();
+                    this.recognition.start();
+                }
+            }
+
+            stopListening() {
+                this.isListening = false;
+                this.voiceButton.classList.remove('recording');
+            }
+
+            updateStatus(message, type = '') {
+                this.status.textContent = message;
+                this.status.className = `status ${type}`;
+            }
+
+            async processVoiceCommand(text) {
+                this.updateStatus('Processing your command...', 'processing');
+                
+                try {
+                    const response = await fetch('/process_voice', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ text: text })
+                    });
+
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.pendingPayment = result;
+                        this.showConfirmation(result);
+                        this.speak(result.message);
+                    } else {
+                        this.updateStatus(result.error, 'error');
+                        this.speak(result.error);
+                    }
+                } catch (error) {
+                    this.updateStatus('Error processing command', 'error');
+                    this.speak('Error processing your command');
+                }
+            }
+
+            showConfirmation(paymentData) {
+                this.confirmationDetails.innerHTML = `
+                    <p><strong>Amount:</strong> ₹${paymentData.amount}</p>
+                    <p><strong>To:</strong> ${paymentData.contact.name} (${paymentData.contact.upi_id})</p>
+                    ${paymentData.reason ? `<p><strong>For:</strong> ${paymentData.reason}</p>` : ''}
+                `;
+                this.confirmationPanel.classList.add('show');
+                this.updateStatus(paymentData.message, 'success');
+            }
+
+            hideConfirmation() {
+                this.confirmationPanel.classList.remove('show');
+                this.pendingPayment = null;
+            }
+
+            async confirmPayment() {
+                if (!this.pendingPayment) return;
+
+                this.updateStatus('Processing payment...', 'processing');
+                
+                try {
+                    const response = await fetch('/execute_payment', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(this.pendingPayment)
+                    });
+
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.updateStatus(result.message, 'success');
+                        this.speak(result.message);
+                        this.hideConfirmation();
+                    } else {
+                        this.updateStatus('Payment failed', 'error');
+                        this.speak('Payment failed. Please try again.');
+                    }
+                } catch (error) {
+                    this.updateStatus('Payment failed', 'error');
+                    this.speak('Payment failed. Please try again.');
+                }
+            }
+
+            cancelPayment() {
+                this.hideConfirmation();
+                this.updateStatus('Payment cancelled', 'error');
+                this.speak('Payment cancelled');
+            }
+        }
+
+        // Initialize the voice payment agent when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new VoicePaymentAgent();
+        });
+    </script>
+</body>
+</html>

@@ -7,3 +7,15 @@ channel = "stable-24_05"
 [[ports]]
 localPort = 8888
 externalPort = 80
+
+[workflows]
+runButton = "Run Voice Payment Agent"
+
+[[workflows.workflow]]
+name = "Run Voice Payment Agent"
+author = 39469019
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python app.py"
