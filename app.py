@@ -1,11 +1,18 @@
 
 from flask import Flask, render_template, request, jsonify
+from flask_cors import CORS
 import json
 import re
 import os
+import requests
 from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Sarvam AI Configuration
+SARVAM_API_KEY = os.getenv('SARVAM_API_KEY', 'your-sarvam-api-key-here')
+SARVAM_BASE_URL = 'https://api.sarvam.ai/v1'
 
 # Sample contacts database
 CONTACTS = {
@@ -31,6 +38,49 @@ class VoicePaymentProcessor:
             r'(?:send|pay|transfer|give)\s+(\w+)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?',
             r'pay\s+(\w+)\s+(?:rupees?\s*)?(\d+|one hundred|two hundred|three hundred|four hundred|five hundred|thousand)(?:\s*rupees?)?\s+for\s+(.*)',
         ]
+    
+    def enhance_with_sarvam_ai(self, text):
+        """Use Sarvam AI for better text understanding"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {SARVAM_API_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            payload = {
+                'model': 'sarvam-1',
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': 'You are a payment intent classifier. Extract amount, recipient name, and reason from payment commands. Respond in JSON format with fields: amount (number), recipient (string), reason (string or null).'
+                    },
+                    {
+                        'role': 'user',
+                        'content': f'Extract payment details from: "{text}"'
+                    }
+                ],
+                'max_tokens': 100,
+                'temperature': 0.1
+            }
+            
+            response = requests.post(
+                f'{SARVAM_BASE_URL}/chat/completions',
+                headers=headers,
+                json=payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                ai_response = result['choices'][0]['message']['content']
+                try:
+                    return json.loads(ai_response)
+                except json.JSONDecodeError:
+                    pass
+        except Exception as e:
+            print(f"Sarvam AI error: {e}")
+        
+        return None
     
     def extract_amount(self, text):
         """Extract amount from text"""
@@ -64,9 +114,36 @@ class VoicePaymentProcessor:
     
     def process_voice_command(self, text):
         """Process voice command and extract payment intent"""
+        original_text = text
         text = text.lower().strip()
         
-        # Extract amount and contact
+        # First try Sarvam AI for better understanding
+        ai_result = self.enhance_with_sarvam_ai(original_text)
+        if ai_result:
+            amount = ai_result.get('amount')
+            recipient_name = ai_result.get('recipient')
+            reason = ai_result.get('reason')
+            
+            # Find contact by name
+            contact = None
+            if recipient_name:
+                for contact_key, contact_info in CONTACTS.items():
+                    if (contact_key.lower() == recipient_name.lower() or 
+                        contact_info['name'].lower() == recipient_name.lower()):
+                        contact = contact_info
+                        break
+            
+            if amount and contact:
+                return {
+                    'success': True,
+                    'amount': amount,
+                    'contact': contact,
+                    'reason': reason,
+                    'message': f"Confirming payment of {amount} rupees to {contact['name']}" + 
+                              (f" for {reason}" if reason else "") + ". Say 'confirm' to proceed."
+                }
+        
+        # Fallback to original pattern matching
         amount = self.extract_amount(text)
         contact = self.extract_contact(text)
         
