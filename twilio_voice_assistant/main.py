@@ -5,6 +5,8 @@ import logging
 import wave
 import audioop
 import pywav
+import requests
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from twilio.twiml.voice_response import VoiceResponse, Connect
@@ -29,6 +31,10 @@ load_dotenv()
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TOOLS_API_BASE_URL = os.getenv("TOOLS_API_BASE_URL")
+SPLITWISE_API_KEY = os.getenv("SPLITWISE_API_KEY")
+CASHFREE_CLIENT_ID = os.getenv("CASHFREE_CLIENT_ID")
+CASHFREE_CLIENT_SECRET = os.getenv("CASHFREE_CLIENT_SECRET")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +69,7 @@ async def handle_incoming_call(response: Response):
     connect = Connect()
     # IMPORTANT: Replace the example URL below with your actual ngrok forwarding URL.
     # Make sure to use 'wss' for a secure WebSocket connection.
-    connect.stream(url="wss://bc27-14-143-179-90.ngrok-free.app/ws")
+    connect.stream(url="wss://ffdb-14-143-179-90.ngrok-free.app/ws")
     twiml_response.append(connect)
     
     logger.info("Responding with TwiML to connect to WebSocket.")
@@ -108,15 +114,27 @@ async def websocket_endpoint(websocket: WebSocket):
                         # 2. Transcribe audio to text
                         transcription = transcribe_audio(wav_bytes)
                         if transcription and transcription.transcript:
+                            # CORRECTED: Get the detected language from the STT response using the correct attribute 'language_code'.
+                            # We default to 'en-IN' if the language code is not available.
+                            detected_language = getattr(transcription, 'language_code', 'en-IN')
+                            logger.info(f"Detected language: {detected_language}")
+
                             # 3. Get a response from the LLM
                             logger.info(f"LLM INPUT (Transcription): {transcription.transcript}")
-                            llm_response_text = get_llm_response(transcription.transcript)
+                            llm_response_text = get_llm_response(
+                                transcription.transcript,
+                                language_code=detected_language
+                            )
                             
                             if llm_response_text:
                                 logger.info(f"LLM OUPUT (Response): {llm_response_text}")
                                 
                                 # 4. Convert the LLM's text response to speech
-                                response_audio_wav = convert_text_to_speech(llm_response_text)
+                                # NEW: Pass the detected language to the TTS function.
+                                response_audio_wav = convert_text_to_speech(
+                                    llm_response_text,
+                                    language_code=detected_language
+                                )
 
                                 if response_audio_wav:
                                     # --- Start of Comprehensive Outgoing Audio Logging ---
@@ -240,6 +258,205 @@ def convert_wav_to_mulaw_bytes(wav_bytes: bytes) -> bytes:
         logger.error(f"Failed to convert wav to mulaw: {e}", exc_info=True)
         return None
 
+# --- Tool Definitions and Execution ---
+
+def summarize_expenses(expenses: list, limit: int = 15) -> list:
+    """
+    Summarizes a list of expenses based on the new API format, returning
+    the key details for the most recent transactions, including emails.
+    """
+    summary = []
+    # Process the most recent expenses up to the limit
+    for expense in expenses[:limit]:
+        summary.append({
+            "description": expense.get('description'),
+            "amount": expense.get('amount'),
+            "currency": expense.get('currency_code'),
+            "date": expense.get('date', '').split('T')[0],
+            "from_user": expense.get('from'),
+            "from_email": expense.get('from_email'),
+            "to_user": expense.get('to'),
+            "to_email": expense.get('to_email'),
+            "settled": expense.get('settled')
+        })
+    return summary
+
+# Define the schema for the tools the LLM can use.
+# This tells the model what functions are available, what they do, and what parameters they take.
+TOOLS = [
+    {
+        "name": "get_current_user",
+        "description": "Fetches the details of the currently authenticated user from Splitwise. Use this to find out who the user is, their name, or their user ID.",
+        "parameters": []
+    },
+    {
+        "name": "get_expenses",
+        "description": "Fetches a list of recent expenses. Use this when the user asks about their recent transactions, bills, or what they've spent money on.",
+        "parameters": []
+    },
+    {
+        "name": "initiate_payment",
+        "description": "Starts the process of paying an outstanding expense to a specific person. Use this when the user wants to settle a debt or pay someone.",
+        "parameters": [
+            {"name": "recipient_name", "type": "string", "description": "The name of the person to pay."}
+        ]
+    }
+]
+
+def _get_current_user_identity() -> dict:
+    """Internal helper to fetch the current user's details."""
+    logger.info("Fetching current user identity...")
+    url = f"{TOOLS_API_BASE_URL}/tools/getCurrentUser"
+    headers = {
+        'x-splitwise-key': f'{SPLITWISE_API_KEY}',
+        'Content-Type': 'application/json'
+    }
+    try:
+        response = requests.post(url, headers=headers, data='{}')
+        response.raise_for_status()
+        user_data = response.json()
+        return user_data.get('data', {}).get('result', {}).get('user', {})
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch current user identity: {e}")
+        return {}
+
+def call_tool(tool_name: str, parameters: dict):
+    """
+    Executes the appropriate API call based on the tool name provided by the LLM.
+    """
+    if tool_name == "get_current_user":
+        logger.info("Executing tool: get_current_user")
+        user_identity = _get_current_user_identity()
+        if not user_identity:
+            return json.dumps({"error": "Could not retrieve current user's identity."})
+        
+        # We wrap it in the same structure as other tools for consistency
+        user_data = {"success": True, "data": {"result": {"user": user_identity}}}
+        logger.info(f"Tool 'get_current_user' returned: {user_data}")
+        return json.dumps(user_data)
+    
+    elif tool_name == "get_expenses":
+        logger.info("Executing tool: get_expenses")
+        url = f"{TOOLS_API_BASE_URL}/tools/getExpenses"
+        headers = {
+            'x-splitwise-key': f'{SPLITWISE_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        try:
+            response = requests.post(url, headers=headers, data='{}')
+            response.raise_for_status()
+            expenses_data = response.json()
+            logger.info(f"Tool 'get_expenses' returned: {expenses_data}")
+            logger.info(f"Tool 'get_expenses' returned successfully with {len(expenses_data.get('data', {}).get('result', {}).get('expenses', []))} expenses.")
+            
+            # Pre-process the data before sending to the LLM
+            expenses_list = expenses_data.get('data', {}).get('result', {}).get('expenses', [])
+            summarized_data = summarize_expenses(expenses_list)
+            
+            # We return the summarized JSON string to the LLM.
+            return json.dumps(summarized_data)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API call to {tool_name} failed: {e}")
+            return json.dumps({"error": f"Failed to execute tool {tool_name}."})
+
+    elif tool_name == "initiate_payment":
+        logger.info(f"--- Starting Intelligent Payment Flow for: {parameters.get('recipient_name')} ---")
+        recipient_name_query = parameters.get("recipient_name")
+        if not recipient_name_query:
+            return json.dumps({"error": "I need to know who you want to pay. Please provide a name."})
+
+        # Step 1: Establish self-identity. Who am I?
+        current_user = _get_current_user_identity()
+        if not current_user:
+            return json.dumps({"error": "I couldn't identify who you are, so I can't make a payment."})
+        current_user_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+        logger.info(f"Step 1: Identity confirmed as '{current_user_name}'.")
+
+        # Step 2: Get all expenses for context.
+        logger.info("Step 2: Fetching all expenses to calculate net balance.")
+        expenses_url = f"{TOOLS_API_BASE_URL}/tools/getExpenses"
+        expenses_headers = {'x-splitwise-key': f'{SPLITWISE_API_KEY}', 'Content-Type': 'application/json'}
+        try:
+            expenses_response = requests.post(expenses_url, headers=expenses_headers, data='{}')
+            expenses_response.raise_for_status()
+            all_expenses = expenses_response.json().get('data', {}).get('result', {}).get('expenses', [])
+            logger.info(f"Successfully fetched {len(all_expenses)} expense records.")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Internal call to getExpenses failed: {e}")
+            return json.dumps({"error": "I couldn't retrieve the list of expenses to find the payment details."})
+
+        # Step 3: Calculate the net balance between the current user and the recipient.
+        logger.info(f"Step 3: Calculating net balance between '{current_user_name}' and '{recipient_name_query}'.")
+        net_balance = 0.0
+        recipient_email = None
+        recipient_full_name = None
+
+        current_user_name_words = set(current_user_name.lower().split())
+        recipient_query_words = set(recipient_name_query.lower().split())
+
+        for expense in all_expenses:
+            if expense.get('settled'):
+                continue
+
+            from_user_words = set(expense.get('from', '').lower().split())
+            to_user_words = set(expense.get('to', '').lower().split())
+            amount = float(expense.get('amount', 0.0))
+
+            # Case 1: I (current user) owe them money.
+            if current_user_name_words.issubset(from_user_words) and recipient_query_words.issubset(to_user_words):
+                net_balance += amount
+                if not recipient_email:
+                    recipient_email = expense.get('to_email')
+                    recipient_full_name = expense.get('to')
+
+            # Case 2: They owe me money.
+            elif recipient_query_words.issubset(from_user_words) and current_user_name_words.issubset(to_user_words):
+                net_balance -= amount
+        
+        logger.info(f"Final calculated net balance is: {net_balance:.2f}")
+
+        # Step 4: Act based on the calculated net balance.
+        if net_balance <= 0:
+            message = f"There is no outstanding balance for you to pay to {recipient_name_query}. "
+            if net_balance < 0:
+                message += f"In fact, they owe you {abs(net_balance):.2f}."
+            else:
+                message += "Your balance appears to be settled."
+            return json.dumps({"error": message})
+
+        if not recipient_email:
+            return json.dumps({"error": f"I calculated that you owe {net_balance:.2f}, but I couldn't find an email for {recipient_name_query} to send the payment."})
+
+        # Step 5: If a payment is needed, call the payment API with the exact payload.
+        payment_payload = {
+            "customer_email": recipient_email,
+            "link_amount": int(net_balance * 100),
+            "customer_name": recipient_full_name or recipient_name_query
+        }
+        
+        logger.info(f"Step 4: Preparing to call payment API with exact payload: {payment_payload}")
+        
+        payment_url = f"{TOOLS_API_BASE_URL}/tools/createPaymentLink"
+        payment_headers = {
+            'Content-Type': 'application/json',
+            'x-api-version': '2023-08-01',
+            'x-client-id': CASHFREE_CLIENT_ID,
+            'x-client-secret': CASHFREE_CLIENT_SECRET
+        }
+
+        try:
+            payment_response = requests.post(payment_url, headers=payment_headers, json=payment_payload)
+            payment_response.raise_for_status()
+            payment_data = payment_response.json()
+            logger.info(f"Payment link API call successful: {payment_data}")
+            return json.dumps(payment_data)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Payment link creation failed: {e}")
+            return json.dumps({"error": "I tried to create the payment link, but the request to the payment service failed."})
+    else:
+        logger.warning(f"LLM tried to call an unknown tool: {tool_name}")
+        return json.dumps({"error": "Unknown tool."})
+
 # --- SarvamAI Speech-to-Text Function (adapted from your script) ---
 def transcribe_audio(audio_bytes: bytes):
     """
@@ -284,56 +501,163 @@ def transcribe_audio(audio_bytes: bytes):
         return None
 
 # --- SarvamAI Language Model (LLM) Function ---
-def get_llm_response(text: str):
-    """Get a response from SarvamAI's Chat Completion model."""
+def get_llm_response(text: str, language_code: str = "en-IN"):
+    """
+    Manages the interaction with the LLM, including tool-calling logic.
+    """
     if not sarvam_client:
         logger.error("SarvamAI client not available.")
         return "The AI model is currently unavailable. Please try again later."
+
+    # 1. First Pass: Tool Selection
+    # The system prompt now instructs the LLM on how to use tools.
+    system_prompt_for_tool_selection = f"""
+You are a helpful assistant that has access to a set of tools to answer user queries .
+
+If the user's query can be answered by one of the tools, you MUST respond ONLY with a JSON object in the following format:
+{{
+  "tool_name": "name_of_the_tool",
+  "parameters": {{}}
+}}
+
+For tools with parameters, the format is:
+{json.dumps(TOOLS, indent=2)}
+
+Do not include any other text, explanation, or markdown. No stars no special characters. No new lines. A single paragraph.
+
+If the user's query is conversational and does not require a tool, just respond naturally.
+You MUST respond in the following language: {language_code}.
+
+Here are the available tools:
+{json.dumps(TOOLS, indent=2)}
+"""
     
     messages = [
-        {"role": "system", "content": "You are a helpful and concise assistant speaking on a phone call."},
+        {"role": "system", "content": system_prompt_for_tool_selection},
         {"role": "user", "content": text}
     ]
     
-    logger.info(f"Sending to LLM: {text}")
+    logger.info(f"Sending to LLM for tool selection: {text}")
     try:
-        # Based on SarvamAI documentation, the 'model' parameter is not used in the Python SDK
         response = sarvam_client.chat.completions(
             messages=messages,
-            max_tokens=100,
-            temperature=0.7,
+            max_tokens=550, # Increased tokens to allow for JSON response
+            temperature=0.0, # Low temperature for reliable JSON output
         )
-        content = response.choices[0].message.content
-        logger.info(f"Received from LLM: {content}")
-        return content
+        llm_output = response.choices[0].message.content
+        logger.info(f"Received from LLM (initial pass): {llm_output}")
+
+        # 2. Check if the LLM wants to call a tool
+        try:
+            tool_call_request = json.loads(llm_output)
+            tool_name = tool_call_request.get("tool_name")
+            
+            if tool_name:
+                # 3. Execute the tool
+                tool_result = call_tool(tool_name, tool_call_request.get("parameters", {}))
+                
+                # 4. Second Pass: Generate Final Response
+                # Now we send the tool's result back to the LLM to generate a human-friendly response.
+                system_prompt_for_final_response = f"""You are a helpful and concise assistant. A tool was just run to get information for the user.
+Your task is to take the result from that tool and formulate a clear, natural language response to the user's original query.
+
+You MUST formulate your response in the following language: {language_code}.
+If the tool's response data is in a different language, you MUST translate it to {language_code}.
+
+IMPORTANT FORMATTING RULES:
+- Your final response must be a single, plain paragraph.
+- Do NOT use any markdown formatting like bullet points, stars, or bold text.
+- Do NOT include any URLs or links in your response.
+- Summarize the key information from the tool's result in a conversational way. For example, instead of listing "Name: John, Email: john@test.com", say "Your name is John and your email is john@test.com".
+
+When answering questions about expenses, pay close attention to the 'from_user' and 'to_user' fields to understand who paid whom. Use the 'amount' field for the value of the transaction. Answer the user's specific question (e.g., 'How much do I owe X?'). If there are multiple relevant transactions, you can summarize them or add them up if needed.
+
+If a payment was initiated, the tool result will contain either a success message with a 'link_url' or an error message. Relay this information clearly to the user. For example, if successful, say "I've created a payment link for you to pay..." and include the link. If there's an error like 'no unsettled expenses found', say that.
+"""
+                
+                final_messages = [
+                    {"role": "system", "content": system_prompt_for_final_response},
+                    {"role": "user", "content": f"My original question was: '{text}'"},
+                    {"role": "assistant", "content": f"I have run the tool '{tool_name}' and the result is: {tool_result}"},
+                    {"role": "user", "content": "Now, please give me the final answer based on this information."}
+                ]
+                
+                logger.info(f"Sending tool result to LLM for final response generation.")
+                final_response = sarvam_client.chat.completions(
+                    messages=final_messages,
+                    max_tokens=300, # Increased from 100 to allow for a full, detailed response
+                    temperature=0.7,
+                )
+                logger.info(f"Final response: {final_response}")
+                final_content = final_response.choices[0].message.content
+                logger.info(f"Received from LLM (final response): {final_content}")
+                return final_content
+            else:
+                # If it's valid JSON but not a tool call, treat as conversational
+                return llm_output
+
+        except (json.JSONDecodeError, AttributeError):
+            # If the output is not a JSON object, it's a direct conversational response.
+            logger.info("LLM response is conversational, not a tool call.")
+            return llm_output
+
     except Exception as e:
-        logger.error(f"LLM request failed: {e}")
-        return "I'm sorry, I had trouble generating a response."
+        logger.error(f"LLM request failed: {e}", exc_info=True)
+        return "I'm sorry, I had trouble processing your request."
 
 # --- SarvamAI Text-to-Speech (TTS) Function ---
-def convert_text_to_speech(text: str):
-    """Converts text to speech using SarvamAI and returns WAV audio bytes."""
+def convert_text_to_speech(text: str, language_code: str = "en-IN"):
+    """
+    Converts text to speech using SarvamAI, correctly combines all audio chunks, 
+    and returns a single, valid WAV audio byte string.
+    """
     if not sarvam_client:
         logger.error("SarvamAI client not available.")
         return None
     
-    logger.info(f"Sending to TTS: {text}")
+    logger.info(f"Sending to TTS: '{text}' in language: {language_code}")
     try:
         response = sarvam_client.text_to_speech.convert(
             text=text,
-            target_language_code="en-IN",
-            speaker="anushka", # Switched to a compatible speaker for bulbul:v2
+            target_language_code=language_code,
+            speaker="anushka",
             model="bulbul:v2",
-            speech_sample_rate=8000 # Request 8kHz directly for Twilio
+            speech_sample_rate=8000
         )
-        # The response contains the audio as a list of base64 encoded strings.
-        # We take the first element as we only send one text input.
-        audio_base64 = response.audios[0]
-        wav_bytes = base64.b64decode(audio_base64)
-        logger.info("Received TTS audio from SarvamAI.")
-        return wav_bytes
+        
+        audio_chunks_base64 = response.audios
+        if not audio_chunks_base64:
+            logger.error("TTS response contained no audio chunks.")
+            return None
+
+        logger.info(f"Received {len(audio_chunks_base64)} audio chunks from TTS. Combining them...")
+
+        # Decode all chunks from base64 into a list of bytes
+        decoded_chunks = [base64.b64decode(chunk) for chunk in audio_chunks_base64]
+
+        # 1. Read the audio parameters from the first chunk.
+        with wave.open(io.BytesIO(decoded_chunks[0]), 'rb') as wf:
+            params = wf.getparams()
+
+        # 2. Read the raw audio data (frames) from *all* chunks.
+        all_frames = []
+        for chunk_bytes in decoded_chunks:
+            with wave.open(io.BytesIO(chunk_bytes), 'rb') as wf:
+                all_frames.append(wf.readframes(wf.getnframes()))
+
+        # 3. Create a new, final WAV file in memory.
+        final_wav_buffer = io.BytesIO()
+        with wave.open(final_wav_buffer, 'wb') as final_wf:
+            # 4. Write the correct header and the combined audio data.
+            final_wf.setparams(params)
+            final_wf.writeframes(b"".join(all_frames))
+
+        final_wav_bytes = final_wav_buffer.getvalue()
+        logger.info("Successfully combined audio chunks into a single WAV file.")
+        return final_wav_bytes
+
     except Exception as e:
-        logger.error(f"TTS request failed: {e}")
+        logger.error(f"TTS request or audio combination failed: {e}", exc_info=True)
         return None
 
 # --- Main execution ---

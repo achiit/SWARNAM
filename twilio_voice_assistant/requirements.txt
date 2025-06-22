@@ -5,4 +5,5 @@ sarvamai
 websockets
 python-dotenv
 audioop-lts
-pywav 
+pywav
+requests 
